@@ -5,7 +5,7 @@ use std::io::{prelude::*, BufReader, Write};
 use std::mem;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU16, AtomicUsize};
-use std::sync::{RwLock, Mutex};
+use std::sync::{Mutex, RwLock};
 
 const WAL_THRESHOLD: u16 = 100;
 const KV_THRESHOLD: u16 = 100;
@@ -13,15 +13,15 @@ const SKIPLIST_LEVELS: usize = 3;
 static OBJECT_COUNTER: AtomicUsize = AtomicUsize::new(0);
 const WAL_PATH: &str = "./wal/log.txt";
 
-pub trait Key: Ord + Default + Clone + fmt::Debug {}
-impl<T: Ord + Default + Clone + fmt::Debug> Key for T {}
+pub trait Key: Ord + Default + Clone + fmt::Debug + for<'a> From<&'a str> {}
+impl<T: Ord + Default + Clone + fmt::Debug + for<'a> From<&'a str>> Key for T {}
 
-pub trait Value: Default + Clone + fmt::Debug {}
-impl<T: Default + Clone + fmt::Debug> Value for T {}
+pub trait Value: Default + Clone + fmt::Debug + for<'a> From<&'a str> {}
+impl<T: Default + Clone + fmt::Debug + for<'a> From<&'a str>> Value for T {}
 
 struct WAL {
     writes: AtomicU16,
-    fd: File
+    fd: File,
 }
 
 enum WAL_Status {
@@ -39,14 +39,21 @@ impl WAL {
             .expect("could not open / make file");
         let file_metadata = fd.metadata().expect("unable to get file metadata");
         let status = match file_metadata.len() {
-            0 => {WAL_Status::Empty}
-            _ => {WAL_Status::HasData}
+            0 => WAL_Status::Empty,
+            _ => WAL_Status::HasData,
         };
-        (WAL { writes: AtomicU16::new(0), fd}, status)
+        (
+            WAL {
+                writes: AtomicU16::new(0),
+                fd,
+            },
+            status,
+        )
     }
 
     pub fn write<K: Key, V: Value>(&mut self, line: &str) -> u16 {
-        self.writes.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.writes
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let _ = self.fd.write(line.as_bytes());
         let _ = self.fd.write("\n".as_bytes());
         let _ = self.fd.flush();
@@ -55,7 +62,7 @@ impl WAL {
     }
 
     pub fn insert<K: Key, V: Value>(&mut self, k: &K, v: &V) -> u16 {
-        let line = format!("insert!key:{:?};value:{:?}", k, v); 
+        let line = format!("insert!{:?};{:?}", k, v);
         self.write::<K, V>(&line)
     }
 }
@@ -279,16 +286,26 @@ impl<K: Key, V: Value> MemTable<K, V> {
     }
 
     fn interpret(&mut self, line: String) {
-        print!("interpreting {}", line);
+        println!("interpreting {}", line);
+        let (op, data) = line.split_once("!").unwrap();
+        match op {
+            "insert" => {
+                println!("inserting {}", data);
+                let (key, value) = data.split_once(";").unwrap();
+                let _ = self.insert(&key.into(), &value.into());
+            }
+            _ => {}
+        }
     }
 
     fn load_wal(&mut self, wal: &mut WAL) {
         let reader = BufReader::new(&wal.fd);
         for possible_line in reader.lines() {
-            let line = possible_line.unwrap(); 
+            let line = possible_line.unwrap();
             self.interpret(line);
         }
-        wal.fd.set_len(0).expect("unable to truncate WAL");
+        // we cannot clear the wal
+        // adding data to the memtable is not a guarantee of durability
     }
 }
 
@@ -311,7 +328,7 @@ impl<K: Key, V: Value> DB<K, V> {
         if matches!(status, WAL_Status::HasData) {
             println!("the wal has data");
             kv.load_wal(&mut wal);
-        } 
+        }
 
         let wal = Mutex::new(wal);
 
