@@ -139,48 +139,6 @@ impl<K: Key, V: Value> Node<K, V> {
             self.push(key, value, level - 1, new_node_rc)
         }
     }
-
-    fn get(&self, key: &K, level: usize) -> Option<V> {
-        println!(
-            "looking for {:?} at level {}. currently comparing to {:?}: {}",
-            key,
-            level,
-            self.key,
-            *key == self.key
-        );
-        if self.key == *key {
-            println!("returning {:?}", self.value.clone());
-            return Some(self.value.clone());
-        }
-        match &self.next[level] {
-            Some(n) => {
-                let l = n.read().unwrap();
-                match (l.key > *key, level) {
-                    (true, 0) => {
-                        println!("lowest level");
-                        return None;
-                    }
-                    (false, _) => {
-                        println!("valid, iterating");
-                        return l.get(key, level);
-                    }
-                    (true, _) => {
-                        println!("overshot, dropping level");
-                        return self.get(key, level - 1);
-                    }
-                }
-                // we go down if possible
-            }
-            None => match level {
-                0 => {
-                    return None;
-                }
-                _ => {
-                    return self.get(key, level - 1);
-                }
-            },
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -222,28 +180,47 @@ impl<K: Key, V: Value> SkipList<K, V> {
 
     fn get(&self, key: &K) -> Option<V> {
         let heads = self.heads.read().unwrap();
+        println!("heads node {:?}", heads.key);
         let top_level = (SKIPLIST_LEVELS - 1) as usize;
-        // let mut searched = false;
-        // let mut res: Option<V> = heads[(SKIPLIST_LEVELS - 1) as usize];
-        heads.get(key, top_level)
-        // while !searched {
-        //     res = match (&heads.next[current_level], current_level) {
-        //         (Some(node), x) => {
-        //             searched = true;
-        //             node.read().unwrap().get(key, current_level)
-        //         }
-        //         (None, 0) => {
-        //             searched = true;
-        //             None
-        //         }
-        //         (None, _) => {
-        //             current_level -= 1;
-        //             None
-        //         }
-        //     }
-        // }
-        // println!("res is {:?}", res);
-        // res
+        let mut current_level = top_level;
+        loop {
+            if let Some(incoming) = &heads.next[current_level] {
+                let mut node = Rc::clone(incoming);
+                let mut lock = incoming.read().unwrap();
+
+                loop {
+                    // current value matches
+                    println!("current key {:?}", lock.key);
+                    if lock.key == *key {
+                        return Some(lock.value.clone());
+                    }
+                    if lock.next[current_level].is_none()
+                        || lock.next[current_level]
+                            .as_ref()
+                            .unwrap()
+                            .read()
+                            .unwrap()
+                            .key
+                            > *key
+                    {
+                        if current_level == 0 {
+                            return None;
+                        }
+                        current_level -= 1;
+                        node = Rc::clone(&heads.next[current_level].as_ref().unwrap());
+                    } else {
+                        node = Rc::clone(lock.next[current_level].as_ref().unwrap());
+                    }
+                    lock = unsafe { mem::transmute(node.read().unwrap()) };
+                }
+            } else {
+                println!("dropping level");
+                if current_level == 0 {
+                    return None;
+                }
+                current_level -= 1;
+            }
+        }
     }
 
     fn debug_print(&self) {
