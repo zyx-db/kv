@@ -369,5 +369,7 @@ mod tests {
         for kv in &key_value {
             assert_eq!(skiplist.get(&kv.0.to_string()), Some(kv.1.to_string()));
         }
+        assert_eq!(skiplist.get(&"invalid".to_string()), None);
+        assert_eq!(skiplist.get(&"".to_string()), None);
     }
 }
