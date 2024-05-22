@@ -46,7 +46,12 @@ impl<K: Key, V: Value> Node<K, V> {
         let value = v.clone();
         let mut next = Vec::new();
         next.resize(SKIPLIST_LEVELS as usize, None);
-        Node { key, value, next, debug_id: OBJECT_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)}
+        Node {
+            key,
+            value,
+            next,
+            debug_id: OBJECT_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst),
+        }
     }
 
     fn empty() -> Self {
@@ -54,7 +59,12 @@ impl<K: Key, V: Value> Node<K, V> {
         let value = V::default();
         let mut next = Vec::new();
         next.resize(SKIPLIST_LEVELS as usize, None);
-        Node { key, value, next, debug_id: OBJECT_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst) }
+        Node {
+            key,
+            value,
+            next,
+            debug_id: OBJECT_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst),
+        }
     }
 
     fn debug_print(&self, level: usize) {
@@ -65,7 +75,7 @@ impl<K: Key, V: Value> Node<K, V> {
                 let node = lock.read().unwrap();
                 node.debug_print(level);
             }
-            None => {} 
+            None => {}
         }
     }
 
@@ -74,7 +84,7 @@ impl<K: Key, V: Value> Node<K, V> {
         match self.next[level] {
             Some(ref mut node) => {
                 if node.write().unwrap().key > *key {
-                    let mut new_node = new_node_rc.write().unwrap();  
+                    let mut new_node = new_node_rc.write().unwrap();
                     new_node.next[level] = Some(Rc::clone(new_node_rc));
                     mem::swap(&mut new_node.next[level], &mut self.next[level]);
                     self.next[level] = Some(Rc::clone(new_node_rc));
@@ -164,7 +174,7 @@ impl<K: Key, V: Value> SkipList<K, V> {
         self.insert_with_level(key, value, level);
     }
 
-    fn insert_with_level(&self, key: &K, value: &V, level: usize){
+    fn insert_with_level(&self, key: &K, value: &V, level: usize) {
         {
             let mut heads = self.heads.write().unwrap();
             let new_node = Rc::new(RwLock::new(Node::new(key, value)));
@@ -297,10 +307,16 @@ mod tests {
     fn test_add() {
         let mut rng = ChaCha8Rng::seed_from_u64(1);
         let levels = SKIPLIST_LEVELS;
-        let skiplist : SkipList<String, String> = SkipList::init(levels);
-        let key_value = vec![("abc", "first"), ("db", "me"), ("bill", "random name"), ("cat", "meow"), ("wordd", "freaky")];
+        let skiplist: SkipList<String, String> = SkipList::init(levels);
+        let key_value = vec![
+            ("abc", "first"),
+            ("db", "me"),
+            ("bill", "random name"),
+            ("cat", "meow"),
+            ("wordd", "freaky"),
+        ];
         for kv in &key_value {
-            let level = rng.gen_range(0..levels-1); 
+            let level = rng.gen_range(0..levels - 1);
             println!("inserting at level {}", level);
             skiplist.insert_with_level(&kv.0.to_string(), &kv.1.to_string(), level)
         }
