@@ -6,6 +6,7 @@ use std::mem;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU16, AtomicUsize};
 use std::sync::{Mutex, RwLock};
+use std::collections::{BTreeMap, BTreeSet};
 
 const WAL_THRESHOLD: u16 = 100;
 const KV_THRESHOLD: u16 = 100;
@@ -52,12 +53,11 @@ impl WAL {
     }
 
     pub fn write<K: Key, V: Value>(&mut self, line: &str) -> u16 {
-        self.writes
+        let res = self.writes
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let _ = self.fd.write(line.as_bytes());
         let _ = self.fd.write("\n".as_bytes());
         let _ = self.fd.flush();
-        let res = self.writes.load(std::sync::atomic::Ordering::Relaxed);
         res
     }
 
@@ -178,12 +178,45 @@ impl<K: Key, V: Value> SkipList<K, V> {
         self.debug_print();
     }
 
+    fn insert_with_level_2(&self, key: &K, value: &V, level: usize){
+        let mut heads = self.heads.write().unwrap();
+        let mut current_level = level;
+        let new_node_rc = Rc::new(RwLock::new(Node::new(key, value)));
+        loop {
+            // there is no next
+            if heads.next[current_level].is_none() {
+                heads.next[current_level] = Some(Rc::clone(&new_node_rc));
+                if current_level == 0 {
+                    return;
+                }
+                current_level -= 1;
+                continue
+            }
+            // the first real node is greater than the insert key
+            if heads.next[current_level].as_ref().unwrap().read().unwrap().key > *key {
+                let mut new_node = new_node_rc.write().unwrap();
+                new_node.next[current_level] = Some(Rc::clone(&new_node_rc));
+                mem::swap(&mut new_node.next[current_level], &mut heads.next[current_level]);
+                if current_level == 0 {
+                    return;
+                }
+                current_level -= 1;
+                continue
+            }
+            // we need to hand over hand iterate to find the insert point
+            loop {
+                return;
+            }
+        }
+    }
+
     fn get(&self, key: &K) -> Option<V> {
         let heads = self.heads.read().unwrap();
         println!("heads node {:?}", heads.key);
         let top_level = (SKIPLIST_LEVELS - 1) as usize;
         let mut current_level = top_level;
         loop {
+            
             if let Some(incoming) = &heads.next[current_level] {
                 let mut node = Rc::clone(incoming);
                 let mut lock = incoming.read().unwrap();
@@ -225,7 +258,7 @@ impl<K: Key, V: Value> SkipList<K, V> {
 
     fn debug_print(&self) {
         let root_node = self.heads.read().unwrap();
-        for i in 0..SKIPLIST_LEVELS {
+        for i in (0..SKIPLIST_LEVELS).rev() {
             print!("level {}: ", i);
             match &root_node.next[i as usize] {
                 Some(node) => {
@@ -288,7 +321,24 @@ impl<K: Key, V: Value> MemTable<K, V> {
 
 struct DiskManager {}
 
+enum TransactionState {
+    InProgress,
+    Aborted,
+    Commited
+}
+
+struct Transaction {
+    id: u64,
+    state: TransactionState,
+
+    inprogress: BTreeSet<u64>,
+    writeset: BTreeSet<String>,
+    readset: BTreeSet<String>
+}
+
 pub struct DB<K: Key, V: Value> {
+    transactions: BTreeMap<u64, Transaction>,
+    next_tx_id: u64,
     wal: Mutex<WAL>,
     kv: MemTable<K, V>,
     buffer: PageCache,
